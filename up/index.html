@@ -1,2 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>檔案同步seasonLocal [2part]-1+Ga</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:Arial,sans-serif;max-width:900px;margin:0 auto;padding:12px;font-size:22px;line-height:1.5}
+h2{font-size:26px;margin:8px 0 15px}
+.row{display:flex;gap:10px;margin:12px 0}
+input{flex:1;min-width:0;height:56px;padding:0 16px;font-size:22px;border:1px solid #ccc;border-radius:12px;background:#fff}
+input[type=file]{padding:10px;height:auto}
+button{height:56px;padding:0 20px;font-size:22px;font-weight:700;border:0;border-radius:12px;background:#1976d2;color:#fff;cursor:pointer}
+button:hover{background:#1565c0}
+button:active{transform:scale(.98)}
+a{text-decoration:none;color:#06c}
+#msg{margin:12px 0;font-weight:700;min-height:32px}
+#list{margin-top:12px}
+.card{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #ddd;border-radius:16px;padding:16px;margin:12px 0;box-shadow:0 2px 6px rgba(0,0,0,.08)}
+.fn{flex:8;word-break:break-all;overflow-wrap:anywhere}
+.act{flex:2}
+.act button{width:100%}
+@media(max-width:700px){
+body{padding:10px}
+.row{flex-direction:column}
+input,button{width:100%}
+.card{flex-direction:column;align-items:stretch;padding:18px}
+}
+</style>
+</head>
+<body>
+<h2>檔案暫存🌥️雲端🌥️(！用後請自行刪除私人檔案-3)：</h2>
+<div class="row">
+<input type="password" id="token">
+<button id="loginBtn">登入</button>
+</div>
 
-testing...
+<div class="row">
+<input type="file" id="file">
+<button id="uploadBtn">上傳</button>
+</div>
+<div id="msg"></div>
+<div id="list"></div>
+<script>
+const owner="space-lca",repo="space-lca.github.io",folder="up/files",KEY="seasonlocal";
+const gas="https://script.google.com/macros/s/AKfycbwAHNblAhouBrO1gGfBk4INJMa6CTgYW1LSBRrw6sb9AygUWdPDfj4ybUc0_z1Lw0AW/exec";
+const token=document.getElementById("token"),file=document.getElementById("file"),list=document.getElementById("list"),msg=document.getElementById("msg");
+const api=(p="")=>`https://api.github.com/repos/${owner}/${repo}/contents/${folder}${p}`;
+const hdr=(t=localStorage.getItem(KEY)||"")=>({Authorization:"Bearer "+t,Accept:"application/vnd.github+json"});
+const showMsg=(txt,c="#090")=>{msg.textContent=txt;msg.style.color=c;clearTimeout(msg.t);msg.t=setTimeout(()=>msg.textContent="",3000);};
+
+async function loadTokenFromSheet(){
+try{
+const d=await(await fetch(gas+"?action=token")).json();
+if(d.token){token.value=d.token;localStorage.setItem(KEY,d.token);}
+}catch(e){console.error("讀取 Token 失敗",e);}
+}
+
+async function saveToken(){
+const t=token.value.trim();
+if(!t)return alert("請輸入Token");
+try{
+const r=await fetch("https://api.github.com/user",{headers:hdr(t)}),d=await r.json();
+if(!r.ok)return alert(d.message||"Token無效");
+localStorage.setItem(KEY,t);
+alert("登入成功："+d.login);
+loadFiles();
+}catch(e){console.error(e);alert("Token無效");}
+}
+
+async function upload(){
+const f=file.files[0];
+if(!f)return alert("請選擇檔案");
+try{
+const path=api("/"+encodeURIComponent(f.name)),chk=await fetch(path,{headers:hdr()});
+const sha=chk.ok?(await chk.json()).sha:"";
+const b64=await new Promise(res=>{const r=new FileReader();r.onload=()=>res(r.result.split(",")[1]);r.readAsDataURL(f);});
+const r=await fetch(path,{method:"PUT",headers:{...hdr(),"Content-Type":"application/json"},body:JSON.stringify({message:(sha?"update ":"upload ")+f.name,content:b64,...(sha&&{sha})})});
+const d=await r.json();
+if(!r.ok)return alert(d.message||"上傳失敗");
+await fetch(gas,{method:"POST",body:JSON.stringify({action:"add",name:f.name,url:`https://raw.githubusercontent.com/${owner}/${repo}/main/${folder}/${encodeURIComponent(f.name)}`,sha:d.content.sha})}).catch(console.log);
+file.value="";
+showMsg(sha?"✅ 檔案已覆蓋":"✅ 上傳成功");
+loadFiles();
+}catch(e){console.error(e);alert("上傳失敗");}
+}
+
+async function delFile(name){
+name=decodeURIComponent(name);
+if(!confirm("確定刪除 "+name+" ?"))return;
+try{
+const path=api("/"+encodeURIComponent(name)),info=await(await fetch(path,{headers:hdr()})).json();
+if(!info.sha)return alert("取不到 SHA");
+const r=await fetch(path,{method:"DELETE",headers:{...hdr(),"Content-Type":"application/json"},body:JSON.stringify({message:"delete "+name,sha:info.sha})});
+if(!r.ok)return alert((await r.json()).message);
+await fetch(gas,{method:"POST",body:JSON.stringify({action:"delete",name})}).catch(e=>console.log("GAS更新失敗",e));
+showMsg("✅ 刪除成功");
+loadFiles();
+}catch(e){console.error(e);alert(e.message);}
+}
+
+async function loadFiles(){
+try{
+const files=await(await fetch(gas)).json();
+list.innerHTML=files.sort((a,b)=>String(a.name).localeCompare(String(b.name))).map(f=>`<div class="card"><a class="fn" href="${f.url}" target="_blank">📄 ${f.name}</a><div class="act"><button onclick="delFile(this.dataset.name)" data-name="${encodeURIComponent(f.name)}">🗑️刪除</button></div></div>`).join("");
+}catch(e){console.error(e);list.innerHTML="<div class='card'>無法讀取檔案列表</div>";}
+}
+
+document.getElementById("loginBtn").onclick=saveToken;
+document.getElementById("uploadBtn").onclick=upload;
+window.onload=async()=>{await loadTokenFromSheet();if(token.value)loadFiles();};
+</script>
+</body>
+</html>
